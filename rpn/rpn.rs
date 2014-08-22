@@ -45,14 +45,16 @@ impl fmt::Show for Stack {
     }
 }
 
-struct Tokenizer<'a> {
-    tokens: Vec<&'a str>,
+struct Tokenizer {
+    tokens: Vec<String>,
     i:      uint
 }
-impl<'a> Tokenizer<'a> {
+impl Tokenizer {
     fn new(expression: &str) -> Tokenizer {
         Tokenizer{
-          tokens: expression.split(|c: char| c.is_whitespace()).collect(),
+          tokens: expression.split(|c: char| c.is_whitespace())
+                            .map(|s| s.to_string())
+                            .collect(),
           i:      0
         }
     }
@@ -64,17 +66,17 @@ impl<'a> Tokenizer<'a> {
     fn next_token(&mut self) -> &str {
         if !self.has_next_token() { fail!("Tokens exhausted.") }
 
-        let token = self.tokens[self.i];
+        let token = self.tokens[self.i].as_slice();
         self.i   += 1;
         token
     }
 }
 
-struct RPNCalculator<'a> {
+struct RPNCalculator {
     stack:  Stack,
-    tokens: Tokenizer<'a>
+    tokens: Tokenizer
 }
-impl<'a> RPNCalculator<'a> {
+impl RPNCalculator {
     fn new(stack: Stack, tokens: Tokenizer) -> RPNCalculator {
         RPNCalculator{stack: stack, tokens: tokens}
     }
