@@ -46,29 +46,19 @@ impl fmt::Show for Stack {
 }
 
 struct Tokenizer {
-    tokens: Vec<String>,
-    i:      uint
+    tokens: Vec<String>
 }
 impl Tokenizer {
     fn new(expression: &str) -> Tokenizer {
         Tokenizer{
           tokens: expression.split(|c: char| c.is_whitespace())
                             .map(|s| s.to_string())
-                            .collect(),
-          i:      0
+                            .collect()
         }
     }
 
-    fn has_next_token(&self) -> bool {
-        self.i < self.tokens.len()
-    }
-
-    fn next_token(&mut self) -> &str {
-        if !self.has_next_token() { fail!("Tokens exhausted.") }
-
-        let token = self.tokens[self.i].as_slice();
-        self.i   += 1;
-        token
+    fn iter<'r>(&'r self) -> std::slice::Items<'r, String> {
+        self.tokens.iter()
     }
 }
 
@@ -82,13 +72,12 @@ impl RPNCalculator {
     }
 
     fn calculate(&mut self) -> f64 {
-        while self.tokens.has_next_token() {
-            let token = self.tokens.next_token();
+        for token in self.tokens.iter() {
             if !self.stack.is_empty() {
                 println!("{}", self.stack);
             }
             println!("T: {}\n", token);
-            match token {
+            match token.as_slice() {
                 "+" => { self.stack.add(); }
                 "-" => { self.stack.subtract(); }
                 "*" => { self.stack.multiply(); }
