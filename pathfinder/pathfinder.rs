@@ -113,90 +113,125 @@ enum Job {
     Finish
 }
 
+struct TaskManager {
+    services:       HashMap<String, Vec<String>>,
+    tracker:        SearchTracker,
+    multi_sender:   MultiTaskSender<Job>,
+    event_sender:   Sender<Event>,
+    event_receiver: Receiver<Event>
+}
+impl TaskManager {
+    fn new(services: HashMap<String, Vec<String>>) -> TaskManager {
+        let (sender, receiver) = channel();
+        TaskManager{ services:       services.clone(),
+                     tracker:        SearchTracker::new(services.keys()),
+                     multi_sender:   MultiTaskSender::new(),
+                     event_sender:   sender,
+                     event_receiver: receiver }
+    }
+
+    fn run(&mut self, work: Job) {
+        self.launch_services();
+        self.send_job(work);
+        self.wait_for_services();
+        self.send_job(Finish);
+    }
+
+    fn launch_services(&mut self) {
+        for (name, stops) in self.services.clone().move_iter() {
+            let task_event_sender                = self.event_sender.clone();
+            let (search_sender, search_receiver) = channel();
+            self.multi_sender.add_sender(search_sender.clone());
+            spawn( proc() {
+                loop {
+                    let job = search_receiver.recv();
+                    match job {
+                        Work(search) => {
+                            if stops.contains(&search.from) &&
+                               stops.contains(&search.to) {
+                                let path  = Path::new(
+                                    search.from,
+                                    search.to,
+                                    name.clone()
+                                );
+                                let paths = search.paths.append([path]);
+                                task_event_sender.send(Match(paths))
+                            } else {
+                                let mut tos      = stops.clone();
+                                let     previous = search.stops();
+                                tos.retain(|stop| !previous.contains(stop));
+                                if !search.services().contains(&name) &&
+                                   stops.contains(&search.from)       &&
+                                   !tos.is_empty() {
+                                    let searches = tos.iter().map( |to| {
+                                        let path = Path::new(
+                                            search.from.clone(),
+                                            to.clone(),
+                                            name.clone()
+                                        );
+                                        search.add_path(path)
+                                    } ).collect();
+                                    task_event_sender.send(Partial(searches));
+                                } else {
+                                    task_event_sender.send(Done(name.clone()));
+                                }
+                            }
+                        }
+                        Finish       => { break; }
+                    }
+                }
+            } );
+        }
+    }
+
+    fn wait_for_services(&mut self) {
+        loop {
+            match self.event_receiver.recv() {
+                Match(paths)      => {
+                    let name = paths.last().expect("No path").service.clone();
+                    self.tracker.mark_done(name);
+
+                    let path_string = paths.iter().skip(1).fold(
+                        paths[0].to_string(),
+                        |s, p| s.append(p.to_string().as_slice().slice_from(1))
+                    );
+                    println!("Path: {}", path_string);
+                }
+                Partial(searches) => {
+                    let name = searches.last()
+                                       .expect("No search")
+                                       .paths
+                                       .last()
+                                       .expect("No path")
+                                       .service
+                                       .clone();
+                    self.tracker.mark_done(name);
+
+                    for search in searches.iter() {
+                        self.send_job(Work(search.clone()));
+                    }
+                }
+                Done(name)        => { self.tracker.mark_done(name) }
+            }
+            if self.tracker.is_done() { break; }
+        }
+    }
+
+    fn send_job(&mut self, job: Job) {
+        match job {
+            Work(_) => { self.tracker.add_search(); }
+            Finish  => { /* do nothing */ }
+        }
+        self.multi_sender.send(job);
+    }
+}
+
 fn string_vec(strs: &[&'static str]) -> Vec<String> {
     let mut v = Vec::new();
     for s in strs.iter() {
         v.push(s.to_string());
     }
     v
-}
-
-fn launch_services( services:          HashMap<String, Vec<String>>,
-                    event_sender:      Sender<Event>,
-                    multi_sender: &mut MultiTaskSender<Job> ) {
-    for (name, stops) in services.move_iter() {
-        let task_event_sender                = event_sender.clone();
-        let (search_sender, search_receiver) = channel();
-        multi_sender.add_sender(search_sender.clone());
-        spawn( proc() {
-            loop {
-                let job = search_receiver.recv();
-                match job {
-                    Work(search) => {
-                        if stops.contains(&search.from) &&
-                           stops.contains(&search.to) {
-                            let path  = Path::new( search.from,
-                                                   search.to,
-                                                   name.clone() );
-                            let paths = search.paths.append([path]);
-                            task_event_sender.send(Match(paths))
-                        } else {
-                            let mut tos = stops.clone();
-                            let previous = search.stops();
-                            tos.retain(|stop| !previous.contains(stop));
-                            if !search.services().contains(&name) &&
-                               stops.contains(&search.from)       &&
-                               !tos.is_empty() {
-                                task_event_sender.send(Partial(tos.iter().map(|to| search.add_path(Path::new(search.from.clone(), to.clone(), name.clone()))).collect()))
-                            } else {
-                                task_event_sender.send(Done(name.clone()));
-                            }
-                        }
-                    }
-                    Finish       => { break; }
-                }
-            }
-        } );
-    }
-}
-
-fn wait_for_services( event_receiver:      Receiver<Event>,
-                      multi_sender:   &    MultiTaskSender<Job>,
-                      tracker:        &mut SearchTracker ) {
-    loop {
-        match event_receiver.recv() {
-            Match(paths)      => {
-                let name = paths.last().expect("No path").service.clone();
-                tracker.mark_done(name);
-
-                let s = paths.iter().skip(1).fold(
-                    paths[0].to_string(),
-                    |s, p| s.append(p.to_string().as_slice().slice_from(1))
-                );
-                println!("Path: {}", s);
-            }
-            Partial(searches) => {
-                let name = searches.last().expect("No search").paths.last().expect("No path").service.clone();
-                tracker.mark_done(name);
-
-                for search in searches.iter() {
-                    send_job(Work(search.clone()), multi_sender, tracker);
-                }
-            }
-            Done(name)        => { tracker.mark_done(name) }
-        }
-        if tracker.is_done() { break; }
-    }
-}
-
-fn send_job( job:               Job,
-             multi_sender: &    MultiTaskSender<Job>,
-             tracker:      &mut SearchTracker) {
-    match job {
-        Work(_) => { tracker.add_search(); }
-        Finish  => { /* do nothing */ }
-    }
-    multi_sender.send(job);
 }
 
 fn main() {
@@ -206,16 +241,8 @@ fn main() {
     services.insert("S3".to_string(), string_vec(["C", "D", "E", "F"]));
     services.insert("S4".to_string(), string_vec(["D", "B"]));
 
-    let mut tracker                    =
-        SearchTracker::new(services.keys());
-    let mut multi_sender               =
-        MultiTaskSender::new();
-    let (event_sender, event_receiver) =
-        channel();
-    let work                           =
-        Work(Search::new("A".to_string(), "B".to_string()));
-    launch_services(services, event_sender, &mut multi_sender);
-    send_job(work, &multi_sender, &mut tracker);
-    wait_for_services(event_receiver, &multi_sender, &mut tracker);
-    send_job(Finish, &multi_sender, &mut tracker);
+    let work = Work(Search::new("A".to_string(), "B".to_string()));
+
+    let mut task_manager = TaskManager::new(services);
+    task_manager.run(work);
 }
