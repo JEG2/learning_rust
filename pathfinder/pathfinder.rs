@@ -240,6 +240,7 @@ fn main() {
     services.insert("S2".to_string(), string_vec(["A", "C"]));
     services.insert("S3".to_string(), string_vec(["C", "D", "E", "F"]));
     services.insert("S4".to_string(), string_vec(["D", "B"]));
+    services.insert("S5".to_string(), string_vec(["A", "Z"]));
 
     let work = Work(Search::new("A".to_string(), "B".to_string()));
 
