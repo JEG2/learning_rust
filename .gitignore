@@ -1,2 +1,8 @@
 rpn/rpn
 pathfinder/pathfinder
+ownership/borrow
+ownership/double_move
+ownership/immutable
+ownership/iterators
+ownership/no_mut
+ownership/one_function
